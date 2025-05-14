@@ -2,7 +2,9 @@ from fastapi import APIRouter, Body, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from typing import List
-
+import asyncio
+from services.image_analyze import analyze_image, analyze_with_gemini
+from fastapi import UploadFile, File
 from models.asset import AssetCreate, AssetResponse, AssetDB
 from database import asset_collection
 
@@ -36,3 +38,32 @@ async def create_asset(asset: AssetCreate = Body(...)):
     created_asset = await asset_collection.find_one({"_id": new_asset.inserted_id})
     
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=created_asset)
+
+@router.post("/analyze", response_model=List[dict])
+async def analyze_asset_image(file: UploadFile = File(...)):
+    """
+    Analyze an uploaded image using both OpenAI and Gemini models in parallel.
+    Waits up to 60 seconds for both results and returns them as an array.
+    """
+    # Save uploaded file to a temporary location
+    contents = await file.read()
+    temp_path = f"/tmp/{file.filename}"
+    with open(temp_path, "wb") as f:
+        f.write(contents)
+
+    async def run_blocking(func, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, func, *args)
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                run_blocking(analyze_image, temp_path),
+                run_blocking(analyze_with_gemini, temp_path)
+            ),
+            timeout=120
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Image analysis timed out")
+
+    return results
