@@ -7,8 +7,10 @@ from services.image_analyze import analyze_image, analyze_with_gemini
 from fastapi import UploadFile, File
 from models.asset import AssetCreate, AssetResponse, AssetDB
 from database import asset_collection
-
+import logging
 router = APIRouter()
+
+logging.basicConfig(level=logging.INFO)
 
 @router.get("/", response_model=List[AssetResponse])
 async def get_assets():
@@ -47,10 +49,12 @@ async def analyze_asset_image(file: UploadFile = File(...)):
     """
     # Save uploaded file to a temporary location
     contents = await file.read()
+    logging.info(f"Received file: {file.filename} of size {len(contents)} bytes")
     temp_path = f"/tmp/{file.filename}"
     with open(temp_path, "wb") as f:
         f.write(contents)
 
+    logging.info(f"Saved file to temporary path: {temp_path}")
     async def run_blocking(func, *args):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, func, *args)
