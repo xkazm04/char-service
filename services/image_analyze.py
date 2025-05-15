@@ -1,14 +1,12 @@
 from google.genai import types
 from openai import OpenAI
-from PIL import Image
 import base64
 import json
-import io
 from google import genai
-from PIL import Image
 from dotenv import load_dotenv
 import os
 import logging
+from utils.json_extractor import extract_json_from_text
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -17,19 +15,13 @@ open_api_key = os.getenv("OPENAI_API_KEY")
 google_api_key = os.getenv("GOOGLE_API_KEY")
 groq_api_key = os.getenv("GROQ_API_KEY")
 
-client = OpenAI()
 
-# TBD test groq inference for open sourced models - meta-llama/llama-4-maverick-17b-128e-instruct
-
-
-def analyze_image(image_path: str) -> dict:
-    # Load image and encode to base64
+def analyze_image(image_path: str, model: str, api_key=None) -> list:
     with open(image_path, "rb") as image_file:
         image_data = image_file.read()
 
     base64_image = base64.b64encode(image_data).decode("utf-8")
 
-    # Prepare image for GPT-4 vision
     image_dict = {
         "type": "image_url",
         "image_url": {
@@ -37,9 +29,8 @@ def analyze_image(image_path: str) -> dict:
         }
     }
 
-    # System + user prompt to extract metadata
     messages = [
-        {"role": "system", "content": "You are an assistant that extracts character asset metadata from images for game development."},
+        {"role": "system", "content": "You are an expert system that extracts character asset metadata from images for game development. Return ONLY valid JSON."},
         {"role": "user", "content": [
             image_dict,
             {
@@ -49,30 +40,74 @@ def analyze_image(image_path: str) -> dict:
         ]}
     ]
 
-    # Call OpenAI API with GPT-4 Vision
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=messages,
-        max_tokens=500
-    )
-    
-    logger.info("OpenAI response: %s", response)
-
-    # Parse and return JSON from LLM
     try:
+        if model == "openai":
+            client = OpenAI(api_key=api_key or open_api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                max_tokens=1800,  # Increased token limit
+                response_format={"type": "json_object"}  # Force JSON response when possible
+            )
+        elif model == "groq":
+            client = OpenAI(
+                api_key=api_key or groq_api_key,
+                base_url="https://api.groq.com/openai/v1"
+            )
+            response = client.chat.completions.create(
+                model="meta-llama/llama-4-scout-17b-16e-instruct",
+                messages=messages,
+                max_tokens=1800,  # Increased token limit
+            )
+        else:
+            logger.error(f"Unknown model: {model}")
+            return []
+
+        logger.info(f"{model.upper()} response received")
+    
         output = response.choices[0].message.content
-        return json.loads(output)
+        
+        if output and ('finish_reason' in response and response.finish_reason == 'length'):
+            logger.warning(f"{model} response was truncated, attempting to fix JSON")
+            if output.count('[') > output.count(']'):
+                output += ']' * (output.count('[') - output.count(']'))
+            if output.count('{') > output.count('}'):
+                output += '}' * (output.count('{') - output.count('}'))
+                
+        json_content = extract_json_from_text(output, aggressive=True)
+        
+        if json_content:
+            try:
+                result = json.loads(json_content)
+                if isinstance(result, list):
+                    return result
+                elif isinstance(result, dict):
+                    if any(key in result for key in ["description", "type", "name"]):
+                        return [result]
+                    elif "results" in result and isinstance(result["results"], list):
+                        return result["results"]
+                    else:
+                        for value in result.values():
+                            if isinstance(value, list) and len(value) > 0 and isinstance(value[0], dict):
+                                if any(key in value[0] for key in ["description", "type", "name"]):
+                                    return value
+                
+                logger.error(f"Couldn't extract valid asset list from {model} output")
+                return []
+                
+            except Exception as json_error:
+                logger.error(f"Error parsing JSON from {model}: {json_error}")
+        logger.error(f"Couldn't extract valid JSON from {model} output")
+        return []
+        
     except Exception as e:
-        logger.error("Error parsing LLM output: %s", e)
-        print("Error parsing LLM output:", e)
-        print("Raw output:", response.choices[0].message.content)
-        return {}
+        logger.error(f"Error processing {model} response: {str(e)}")
+        return []
 
 
-def analyze_with_gemini(image_path: str) -> dict:
+def analyze_with_gemini(image_path: str, api_key=None) -> list:
     client = genai.Client(api_key=google_api_key)
     files = [
-        # Please ensure that the file is available in local system working direrctory or change the file path.
         client.files.upload(file=image_path),
     ]
     model = "gemini-1.5-flash"
@@ -101,23 +136,56 @@ def analyze_with_gemini(image_path: str) -> dict:
     )
     logger.info("Gemini response: %s", response)
     try:
-        return json.loads(response.text)
+        raw_text = response.candidates[0].content.parts[0].text
+        json_content = extract_json_from_text(raw_text)
+        
+        if json_content:
+            result = json.loads(json_content)
+            if isinstance(result, list):
+                return result
+            elif isinstance(result, dict):
+                return [result]
+        
+        logger.error("Couldn't extract valid JSON from Gemini output")
+        return []
     except Exception as e:
         logger.error("Error parsing Gemini response: %s", e)
         print("Error:", e)
         print("Response text:", response.text)
-        return {}
+        
+        try:
+            if hasattr(response, 'text'):
+                json_content = extract_json_from_text(response.text, aggressive=True)
+                if json_content:
+                    result = json.loads(json_content)
+                    if isinstance(result, list):
+                        return result
+                    elif isinstance(result, dict):
+                        return [result]
+        except:
+            pass
+            
+        return []
 
 
 PROMPT_TEMPLATE = (
-    "You are an assistant that extracts character asset metadata from images for game development.\n"
-    "Analyze the visual assets of this character and extract the following:\n"
-    "- 'description': A human-readable summary of the asset's visual features.\n"
-    "- 'gen': A version of the description optimized for image generation tools like DALL-E or Midjourney (focus on concise, vivid, style-rich keywords).\n"
-    "- 'category': Classify the asset into one of these categories: "
-    "Hairstyle, Body, Head, Accessories, Equipment, Face, Background, Clothing. "
-    "Return only one category per asset, and use the exact spelling from the list.\n"
-    "- 'name': A short name summarizing the most iconic asset style.\n"
-    "Respond in this JSON format:\n"
-    "{ \"description\": string, \"gen\": string, \"category\": string, \"name\": string }"
+    "You are an expert system that extracts character asset metadata from images for game development.\n\n"
+    "TASK: Analyze the visual elements in this image and identify distinct character assets.\n\n"
+    "OUTPUT REQUIREMENTS:\n"
+    "- Respond ONLY with a valid JSON array.\n"
+    "- Do NOT include any explanations, notes, or text outside the JSON structure.\n"
+    "- Each asset should be a separate object in the array.\n"
+    "- If you find no assets, return exactly '[]' without any additional text.\n\n"
+    "SCHEMA: Each asset object must include EXACTLY these fields:\n"
+    "- 'description': A human-readable summary of the asset's visual features (50-100 characters).\n"
+    "- 'gen': A version of the description optimized for image generation tools (concise keywords, style descriptors).\n"
+    "- 'type': MUST be one of these exact types (choose only one that best fits):\n"
+    "  Hairstyle, Body, Head, Accessories, Equipment, Face, Background, Clothing\n"
+    "- 'name': A brief name (2-5 words) that captures the essence of the asset.\n\n"
+    "EXAMPLE RESPONSE FORMAT:\n"
+    "[\n"
+    "  {\"description\": \"Dark red formal necktie with silk finish\", \"gen\": \"formal silk dark red necktie, business attire, professional\", \"type\": \"Accessories\", \"name\": \"Formal Red Tie\"},\n"
+    "  {\"description\": \"Navy blue tailored suit jacket\", \"gen\": \"navy blue wool suit jacket, formal, business, tailored fit\", \"type\": \"Clothing\", \"name\": \"Navy Business Jacket\"}\n"
+    "]\n\n"
+    "IMPORTANT: Ensure your response contains ONLY the JSON array. Begin with '[' and end with ']' - no other text."
 )

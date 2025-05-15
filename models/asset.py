@@ -1,10 +1,9 @@
-from typing import List, Optional, Any, Dict, Annotated, ClassVar
-from pydantic import BaseModel, Field, ConfigDict, BeforeValidator, GetCoreSchemaHandler
+from typing import List, Optional, Any
+from pydantic import BaseModel, Field, ConfigDict, GetCoreSchemaHandler
 from datetime import datetime
 from bson import ObjectId
 from pydantic_core import core_schema
 
-# Better ObjectId handling for Pydantic v2
 class PydanticObjectId(ObjectId):
     @classmethod
     def __get_pydantic_core_schema__(
@@ -33,8 +32,9 @@ class AssetMetadata(BaseModel):
 
 
 class AssetBase(BaseModel):
-    type: str  # hairstyle, equipment, accessory, etc.
+    type: str  
     name: str
+    gen: str 
     description: Optional[str] = None
     description_vector: Optional[List[float]] = None
     image_url: Optional[str] = None
@@ -63,7 +63,7 @@ class AssetCreate(AssetBase):
 
 
 class AssetResponse(AssetBase):
-    id: str
+    _id: str
     created_at: datetime
     
     model_config = ConfigDict(
@@ -73,6 +73,7 @@ class AssetResponse(AssetBase):
                 "id": "60d21b4967d0d8992e610c87",
                 "type": "hairstyle",
                 "name": "Long Wavy Hair",
+                "gen": "fantasy",
                 "description": "A long flowing hairstyle with waves.",
                 "description_vector": [0.34, 0.21, 0.56],
                 "image_url": "/images/assets/hair01.png",
