@@ -72,8 +72,9 @@ async def delete_asset(id: str):
         delete_result = await asset_collection.delete_one({"_id": object_id})
         if delete_result.deleted_count == 0:
             raise HTTPException(status_code=404, detail=f"Asset with ID {id} not found")
-        return JSONResponse(status_code=status.HTTP_204_NO_CONTENT, content=None)
+        return None 
     except Exception as e:
+        logging.error(f"Error deleting asset with ID {id}: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Invalid ID format or deletion error: {str(e)}")
 
 @router.post("/", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
