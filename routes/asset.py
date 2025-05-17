@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Body, HTTPException, status, Form
+from fastapi import APIRouter, Body, HTTPException, status, Form, Response
 from fastapi.responses import JSONResponse
 from typing import List, Optional
 import json
 from services.image_analyze import analyze_image, analyze_with_gemini
-from services.image_save import validate_asset, save_asset_with_vector, serialize_for_json
+from services.image_save import  serialize_for_json
+from services.asset_save import save_asset_with_vector, validate_asset
 from fastapi import UploadFile, File
 from models.asset import AssetCreate, AssetResponse
 from database import asset_collection
@@ -33,11 +34,29 @@ async def get_assets():
     Get all assets from the database
     """
     assets = await asset_collection.find().to_list(1000)
-    serialized_assets = [serialize_for_json(dict(asset)) for asset in assets]
+    serialized_assets = []
     
-    for asset in serialized_assets:
-        if "_id" in asset and "id" not in asset:
-            asset["id"] = asset["_id"]
+    for asset in assets:
+        asset_dict = serialize_for_json(dict(asset))
+        
+        # Remove binary image data and large embeddings from response
+        if "image_data" in asset_dict:
+            if asset.get("image_data") is not None:
+                asset_dict["image_data_size"] = len(asset["image_data"])
+            else:
+                asset_dict["image_data_size"] = 0
+            del asset_dict["image_data"]
+        
+        if "description_vector" in asset_dict:
+            del asset_dict["description_vector"]
+        
+        if "image_embedding" in asset_dict:
+            del asset_dict["image_embedding"]
+        
+        if "_id" in asset_dict and "id" not in asset_dict:
+            asset_dict["id"] = asset_dict["_id"]
+            
+        serialized_assets.append(asset_dict)
             
     return JSONResponse(content=serialized_assets)
 
@@ -51,6 +70,19 @@ async def get_asset(id: str):
         if (asset := await asset_collection.find_one({"_id": object_id})) is not None:
             # Convert to serializable dictionary
             serialized_asset = serialize_for_json(dict(asset))
+
+            if "image_data" in serialized_asset:
+                if asset.get("image_data") is not None:
+                    serialized_asset["image_data_size"] = len(asset["image_data"])
+                else:
+                    serialized_asset["image_data_size"] = 0
+                del serialized_asset["image_data"]
+            
+            if "description_vector" in serialized_asset:
+                del serialized_asset["description_vector"]
+            
+            if "image_embedding" in serialized_asset:
+                del serialized_asset["image_embedding"]
             
             # Make sure id field exists
             if "_id" in serialized_asset and "id" not in serialized_asset:
@@ -83,31 +115,24 @@ async def create_asset(asset: AssetCreate = Body(...)):
     Create a new asset
     """
     try:
-        # Extract vector if provided in request
         description_vector = None
         asset_dict = asset.model_dump()
         
         if "description_vector" in asset_dict:
             description_vector = asset_dict.pop("description_vector")
         
-        # Create a new AssetCreate instance without the vector
         clean_asset = AssetCreate(**asset_dict)
-        
-        # Save asset with vector
         result = await save_asset_with_vector(clean_asset, description_vector)
         
         # Check if save was successful
         if result.get("status") == "saved":
-            # The result is already serialized by our improved save_asset_with_vector function
             return JSONResponse(
                 status_code=status.HTTP_201_CREATED,
                 content=result
             )
         elif result.get("status") == "error":
-            # Return detailed error from save function
             raise HTTPException(status_code=500, detail=result.get("message", "Unknown error"))
         else:
-            # Unexpected result status
             raise HTTPException(status_code=500, detail="Unexpected response from save operation")
             
     except Exception as e:
@@ -146,8 +171,7 @@ async def analyze_asset_image(
         f.write(contents)
     
     logging.info(f"Saved file to temporary path: {temp_path}")
-    
-    # Parse the configuration
+
     try:
         config_dict = json.loads(config)
         analysis_config = AnalysisConfig(**config_dict)
@@ -192,21 +216,17 @@ async def analyze_asset_image(
                 if isinstance(result, list):
                     results[model_name] = result
                 elif isinstance(result, dict) and not result:
-                    # Empty dict should be an empty list
                     results[model_name] = []
                 elif isinstance(result, dict):
                     # Try to convert dict to list if needed
                     if any(isinstance(v, list) for v in result.values()):
-                        # Get the first list in the dict
                         for v in result.values():
                             if isinstance(v, list):
                                 results[model_name] = v
                                 break
                     else:
-                        # Wrap single dict in a list
                         results[model_name] = [result]
                 else:
-                    # Fallback for any other case
                     results[model_name] = []
                     logging.warning(f"Unexpected result type from {model_name}: {type(result)}")
             except Exception as e:
@@ -220,3 +240,31 @@ async def analyze_asset_image(
         raise HTTPException(status_code=500, detail=f"Error during image analysis: {str(e)}")
 
     return results
+
+
+@router.get("/image/{asset_id}")
+async def get_asset_image(asset_id: str):
+    try:
+        if not ObjectId.is_valid(asset_id):
+            raise HTTPException(status_code=400, detail="Invalid asset ID format")
+            
+        asset = await asset_collection.find_one({"_id": ObjectId(asset_id)})
+        
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+            
+        if "image_data" not in asset or not asset["image_data"]:
+            raise HTTPException(status_code=404, detail="Asset has no image data")
+            
+        content_type = "image/jpeg"
+        
+        return Response(
+            content=asset["image_data"], 
+            media_type=content_type
+        )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error retrieving asset image: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

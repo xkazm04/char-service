@@ -33,11 +33,13 @@ class AssetMetadata(BaseModel):
 
 class AssetBase(BaseModel):
     type: str  
+    subcategory: Optional[str] = None
     name: str
     gen: str 
     description: Optional[str] = None
     description_vector: Optional[List[float]] = None
     image_url: Optional[str] = None
+    image_data: Optional[bytes] = None 
     image_embedding: Optional[List[float]] = None
     metadata: Optional[AssetMetadata] = None
     

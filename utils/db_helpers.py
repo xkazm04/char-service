@@ -1,22 +1,23 @@
 from bson import ObjectId
 from datetime import datetime
 
-def serialize_for_json(obj):
-    """
-    Convert non-serializable types to serializable types
-    - ObjectId to string
-    - datetime to ISO format string
-    """
-    if isinstance(obj, dict):
-        return {k: serialize_for_json(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [serialize_for_json(item) for item in obj]
-    elif isinstance(obj, ObjectId):
-        return str(obj)
-    elif isinstance(obj, datetime):
-        return obj.isoformat()
-    else:
-        return obj
+def serialize_for_json(obj: dict) -> dict:
+    """Convert MongoDB document to JSON-serializable dict"""
+    result = {}
+    for key, value in obj.items():
+        if isinstance(value, ObjectId):
+            result[key] = str(value)
+        elif isinstance(value, datetime):
+            result[key] = value.isoformat()
+        elif isinstance(value, bytes):
+            result[key] = f"<binary data of size {len(value)} bytes>"
+        elif isinstance(value, list) and len(value) > 100:
+            result[key] = f"<array of {len(value)} items>"
+        elif isinstance(value, dict):
+            result[key] = serialize_for_json(value)
+        else:
+            result[key] = value
+    return result
 
 async def safe_find_one(collection, query):
     """
