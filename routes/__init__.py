@@ -3,6 +3,7 @@ from routes.asset import router as asset_router
 from routes.character import router as character_router
 from routes.leo import router as leo_router
 from routes.meshy import router as meshy_router
+from routes.generation import router as generation_router
 
 api_router = APIRouter()
 
@@ -10,3 +11,4 @@ api_router.include_router(asset_router, prefix="/assets", tags=["Assets"])
 api_router.include_router(character_router, prefix="/characters", tags=["Characters"])
 api_router.include_router(leo_router, prefix="/leo", tags=["Leo"])
 api_router.include_router(meshy_router, prefix="/meshy", tags=["Meshy"])
+api_router.include_router(generation_router, prefix="/gen", tags=["Generations"])

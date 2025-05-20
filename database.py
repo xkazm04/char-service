@@ -12,6 +12,7 @@ database = client[DB_NAME]
 
 character_collection = database.get_collection("characters")
 asset_collection = database.get_collection("assets")
+generation_collection = database.get_collection("generations")
 
 async def connect_to_mongo():
     try:

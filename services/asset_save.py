@@ -53,7 +53,7 @@ def calculate_similarity(vec1: List[float], vec2: List[float]) -> float:
     similarity = dot_product / (norm_vec1 * norm_vec2)
     return float(similarity)
 
-async def find_similar_assets(asset: AssetCreate, embedding: List[float], threshold: float = 0.85) -> List[Dict[str, Any]]:
+async def find_similar_assets(asset: AssetCreate, embedding: List[float], threshold: float = 0.95) -> List[Dict[str, Any]]:
     """
     Find assets similar to the provided one based on embedding similarity
     Returns list of similar assets with similarity scores
@@ -81,7 +81,6 @@ async def find_similar_assets(asset: AssetCreate, embedding: List[float], thresh
                 "similarity": similarity
             })
     
-    # Sort by similarity (highest first)
     similar_assets.sort(key=lambda x: x["similarity"], reverse=True)
     return similar_assets
 

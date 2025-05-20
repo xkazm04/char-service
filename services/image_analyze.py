@@ -46,7 +46,7 @@ def analyze_image(image_path: str, model: str, api_key=None) -> list:
             response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=messages,
-                max_tokens=1800,  # Increased token limit
+                max_tokens=3800,  # Increased token limit
                 response_format={"type": "json_object"}  # Force JSON response when possible
             )
         elif model == "groq":

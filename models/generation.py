@@ -38,14 +38,55 @@ class MeshyMetadata(BaseModel):
         arbitrary_types_allowed=True,
         json_encoders={ObjectId: str}
     )
+    
+class UsedAssets(BaseModel):
+    id: str
+    name: str
+    type: str
+    category: str
+    description: str
+    image_data: str
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str}
+    )
 
 
 class GenerationBase(BaseModel):
     character_id: PydanticObjectId
     image_url: Optional[str] = None
+    description: Optional[str] = None
+    used_assets: Optional[List[UsedAssets]] = None
+    description_vector: Optional[List[float]] = None
     meshy: Optional[MeshyMetadata] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
         json_encoders={ObjectId: str}
     )
+
+class GenerationResponse(GenerationBase):
+    id: PydanticObjectId = Field(default_factory=PydanticObjectId, alias="_id")
+
+    class Config:
+        json_encoders = {
+            ObjectId: str
+        }
+        schema_extra = {
+            "example": {
+                "_id": "507f1f77bcf86cd799439011",
+                "character_id": "507f1f77bcf86cd799439012",
+                "image_url": "https://example.com/image.png",
+                "description": "A character description",
+                "meshy": {
+                    "meshy_id": "mesh_123",
+                    "glb_url": "https://example.com/model.glb",
+                    "thumbnail_url": "https://example.com/thumbnail.png",
+                    "texture_prompt": "A texture prompt",
+                    "texture_urls": [{"url": "https://example.com/texture.png"}],
+                    "task_error": {"error_code": 404, "error_message": "Not Found"}
+                },
+                "created_at": datetime.utcnow()
+            }
+        }
