@@ -165,15 +165,13 @@ async def generate_and_save_gen_image(request: GenerationRequest):
         
         image_url = images[0]["url"] 
         try:
-            image_data, content_type = await download_image(image_url)
+            image_data = await download_image(image_url)
             logger.info(f"Downloaded image data from {image_url}: {len(image_data)} bytes")
         except Exception as e:
             logger.warning(f"Failed to download image data from URL: {e}")
-            # Continue with saving even if image download fails
-        
-        # Now save the asset with image data
+
         saved_result = await save_generation(
-            character_id="jinx_v0", 
+            character_id="682cfdfaebbb3e6ada96d357", 
             image_url=image_url,
             description=request.description,
         )

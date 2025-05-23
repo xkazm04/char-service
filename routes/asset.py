@@ -11,13 +11,18 @@ from bson import ObjectId
 import base64
 import math
 import logging
-import io # For in-memory byte streams
-from PIL import Image # For image manipulation
+import io
+from PIL import Image
+import asyncio
+from datetime import datetime, timedelta
+import hashlib
+import json
 
 router = APIRouter()
-
 logging.basicConfig(level=logging.INFO)
 
+# Cache collection for storing processed asset batches
+cache_collection = None  # Initialize this with your database
 
 class ModelConfig(BaseModel):
     enabled: bool
@@ -28,6 +33,226 @@ class AnalysisConfig(BaseModel):
     gemini: ModelConfig
     groq: ModelConfig
 
+class AssetBatchResponse(BaseModel):
+    assets: List[AssetResponse]
+    batch_id: str
+    total_assets: int
+    total_pages: int
+    current_page: int
+    page_size: int
+    cache_key: str
+
+def generate_cache_key(type_filter: Optional[str], page: int, page_size: int, image_quality: int, max_image_width: Optional[int]) -> str:
+    """Generate a cache key based on query parameters"""
+    params = f"{type_filter}_{page}_{page_size}_{image_quality}_{max_image_width}"
+    return hashlib.md5(params.encode()).hexdigest()
+
+async def get_cached_batch(cache_key: str) -> Optional[dict]:
+    """Get cached batch from MongoDB cache collection"""
+    try:
+        if cache_collection is None:
+            return None
+        
+        cached = await cache_collection.find_one({
+            "cache_key": cache_key,
+            "expires_at": {"$gt": datetime.utcnow()}
+        })
+        
+        if cached:
+            logging.info(f"Cache hit for key: {cache_key}")
+            return cached.get("data")
+        
+        return None
+    except Exception as e:
+        logging.warning(f"Cache retrieval error: {e}")
+        return None
+
+async def set_cached_batch(cache_key: str, data: dict, ttl_hours: int = 24):
+    """Cache batch data in MongoDB with TTL"""
+    try:
+        if cache_collection is None:
+            return
+        
+        await cache_collection.replace_one(
+            {"cache_key": cache_key},
+            {
+                "cache_key": cache_key,
+                "data": data,
+                "created_at": datetime.utcnow(),
+                "expires_at": datetime.utcnow() + timedelta(hours=ttl_hours)
+            },
+            upsert=True
+        )
+        logging.info(f"Cached batch with key: {cache_key}")
+    except Exception as e:
+        logging.warning(f"Cache storage error: {e}")
+
+@router.get("/batched", response_model=AssetBatchResponse)
+async def get_assets_batched(
+    type: Optional[str] = Query(None, description="Filter assets by type"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Number of assets per page"),
+    image_quality: int = Query(20, ge=10, le=95, description="Image quality for JPEGs (10-95)"),
+    max_image_width: Optional[int] = Query(None, ge=60, description="Maximum width for resized images")
+):
+    """
+    Get assets with improved caching and batching for better performance
+    """
+    cache_key = generate_cache_key(type, page, page_size, image_quality, max_image_width)
+    
+    # Try to get from cache first
+    cached_data = await get_cached_batch(cache_key)
+    if cached_data:
+        return AssetBatchResponse(**cached_data)
+    
+    query_filter = {}
+    if type:
+        query_filter["type"] = type
+
+    skip_amount = (page - 1) * page_size
+    
+    # Use aggregation pipeline for better performance
+    pipeline = [
+        {"$match": query_filter},
+        {"$facet": {
+            "data": [
+                {"$skip": skip_amount},
+                {"$limit": page_size},
+                {"$project": {
+                    "_id": 1,
+                    "name": 1,
+                    "type": 1,
+                    "subcategory": 1,
+                    "gen": 1,
+                    "description": 1,
+                    "image_url": 1,
+                    "image_data": 1,
+                    "contentType": 1,
+                    "created_at": 1
+                }}
+            ],
+            "count": [
+                {"$count": "total"}
+            ]
+        }}
+    ]
+    
+    result = await asset_collection.aggregate(pipeline).to_list(1)
+    
+    if not result or not result[0]["data"]:
+        empty_response = {
+            "assets": [],
+            "batch_id": f"batch_{page}_{cache_key[:8]}",
+            "total_assets": 0,
+            "total_pages": 0,
+            "current_page": page,
+            "page_size": page_size,
+            "cache_key": cache_key
+        }
+        await set_cached_batch(cache_key, empty_response)
+        return AssetBatchResponse(**empty_response)
+    
+    assets_data = result[0]["data"]
+    total_assets_count = result[0]["count"][0]["total"] if result[0]["count"] else 0
+    total_pages = math.ceil(total_assets_count / page_size)
+    
+    # Process images in parallel
+    async def process_asset_image(asset_doc_raw):
+        try:
+            asset_data_for_response = dict(asset_doc_raw)
+            
+            if asset_doc_raw.get("image_data") and isinstance(asset_doc_raw["image_data"], bytes):
+                # Process image in executor to avoid blocking
+                loop = asyncio.get_event_loop()
+                processed_image = await loop.run_in_executor(
+                    None, 
+                    process_image_sync, 
+                    asset_doc_raw["image_data"],
+                    asset_doc_raw.get("contentType", "image/png"),
+                    image_quality,
+                    max_image_width
+                )
+                
+                if processed_image:
+                    asset_data_for_response["image_data_base64"] = processed_image["base64"]
+                    asset_data_for_response["image_content_type"] = processed_image["content_type"]
+            
+            # Remove unnecessary fields
+            for field in ["description_vector", "image_embedding", "image_data"]:
+                asset_data_for_response.pop(field, None)
+            
+            return AssetResponse.model_validate(asset_data_for_response)
+        except Exception as e:
+            logging.error(f"Error processing asset {asset_doc_raw.get('_id')}: {e}")
+            return None
+    
+    # Process all assets concurrently
+    processed_assets = await asyncio.gather(
+        *[process_asset_image(asset) for asset in assets_data],
+        return_exceptions=True
+    )
+    
+    # Filter out failed processing results
+    valid_assets = [asset for asset in processed_assets if isinstance(asset, AssetResponse)]
+    
+    response_data = {
+        "assets": valid_assets,
+        "batch_id": f"batch_{page}_{cache_key[:8]}",
+        "total_assets": total_assets_count,
+        "total_pages": total_pages,
+        "current_page": page,
+        "page_size": page_size,
+        "cache_key": cache_key
+    }
+    
+    # Cache the response
+    await set_cached_batch(cache_key, response_data)
+    
+    return AssetBatchResponse(**response_data)
+
+def process_image_sync(image_bytes: bytes, content_type: str, quality: int, max_width: Optional[int]) -> Optional[dict]:
+    """Synchronous image processing function for executor"""
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        
+        save_format = 'JPEG'
+        if content_type.lower() == "image/png":
+            save_format = 'PNG'
+        elif content_type.lower() == "image/webp":
+            save_format = 'WEBP'
+        
+        # Resize if needed
+        if max_width and img.width > max_width:
+            aspect_ratio = img.height / img.width
+            new_height = int(max_width * aspect_ratio)
+            img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+        
+        output_buffer = io.BytesIO()
+        if save_format == 'JPEG':
+            if img.mode in ('RGBA', 'LA', 'P'):
+                img = img.convert('RGB')
+            img.save(output_buffer, format=save_format, quality=quality, optimize=True)
+            final_content_type = "image/jpeg"
+        elif save_format == 'PNG':
+            img.save(output_buffer, format=save_format, optimize=True)
+            final_content_type = "image/png"
+        elif save_format == 'WEBP':
+            img.save(output_buffer, format=save_format, quality=quality)
+            final_content_type = "image/webp"
+        else:
+            img.save(output_buffer, format=img.format or 'PNG')
+            final_content_type = content_type
+        
+        compressed_image_bytes = output_buffer.getvalue()
+        return {
+            "base64": base64.b64encode(compressed_image_bytes).decode('utf-8'),
+            "content_type": final_content_type
+        }
+    except Exception as e:
+        logging.warning(f"Image processing failed: {e}")
+        return None
+
+# Keep the original endpoint for backward compatibility
 @router.get("/", response_model=PaginatedAssetResponse)
 async def get_assets(
     type: Optional[str] = Query(None, description="Filter assets by type"),
@@ -36,104 +261,39 @@ async def get_assets(
     image_quality: int = Query(20, ge=10, le=95, description="Image quality for JPEGs (10-95)"),
     max_image_width: Optional[int] = Query(None, ge=60, description="Maximum width for resized images")
 ):
-    """
-    Get assets from the database with pagination and optional type filtering.
-    Includes Base64 encoded image data, potentially re-compressed or resized.
-    """
-    query_filter = {}
-    if type:
-        query_filter["type"] = type
-
-    skip_amount = (page - 1) * page_size
+    """Original endpoint - redirects to batched version"""
+    batched_response = await get_assets_batched(type, page, page_size, image_quality, max_image_width)
     
-    total_assets_count = await asset_collection.count_documents(query_filter)
-    if total_assets_count == 0:
-        return PaginatedAssetResponse(
-            assets=[],
-            total_assets=0,
-            total_pages=0,
-            current_page=page,
-            page_size=page_size
-        )
-
-    total_pages = math.ceil(total_assets_count / page_size)
-
-    # Select only necessary fields from DB initially, especially if image_data is large
-    # and you decide to process it. If image_data is always processed, fetching it is fine.
-    assets_cursor = asset_collection.find(query_filter).skip(skip_amount).limit(page_size)
-    
-    processed_assets: List[AssetResponse] = []
-    async for asset_doc_raw in assets_cursor:
-        try:
-            asset_data_for_response = dict(asset_doc_raw)
-
-            if asset_doc_raw.get("image_data") and isinstance(asset_doc_raw["image_data"], bytes):
-                original_image_bytes = asset_doc_raw["image_data"]
-                content_type = asset_doc_raw.get("contentType", "image/png") # Default to PNG if not specified
-
-                try:
-                    img = Image.open(io.BytesIO(original_image_bytes))
-                    
-                    # Determine format for saving (e.g., JPEG, PNG)
-                    # Use the original content type to guide the save format if possible
-                    save_format = 'JPEG' # Default to JPEG for better compression control
-                    if content_type.lower() == "image/png":
-                        save_format = 'PNG'
-                    elif content_type.lower() == "image/webp":
-                        save_format = 'WEBP'
-                    # Add more formats if needed
-
-                    # Resize if max_image_width is specified
-                    if max_image_width and img.width > max_image_width:
-                        aspect_ratio = img.height / img.width
-                        new_height = int(max_image_width * aspect_ratio)
-                        img = img.resize((max_image_width, new_height), Image.Resampling.LANCZOS)
-
-                    output_buffer = io.BytesIO()
-                    if save_format == 'JPEG':
-                        # For JPEGs, ensure image is in RGB mode (strips alpha)
-                        if img.mode in ('RGBA', 'LA', 'P'): # P is for paletted images
-                            img = img.convert('RGB')
-                        img.save(output_buffer, format=save_format, quality=image_quality, optimize=True)
-                        # Update content type if we converted to JPEG
-                        asset_data_for_response["image_content_type"] = "image/jpeg"
-                    elif save_format == 'PNG':
-                        img.save(output_buffer, format=save_format, optimize=True)
-                        asset_data_for_response["image_content_type"] = "image/png"
-                    elif save_format == 'WEBP':
-                        img.save(output_buffer, format=save_format, quality=image_quality) # WEBP also uses quality
-                        asset_data_for_response["image_content_type"] = "image/webp"
-                    else: # Fallback for other types or if original format is preferred
-                        img.save(output_buffer, format=img.format or 'PNG') # Use original format or default to PNG
-                        asset_data_for_response["image_content_type"] = content_type # Keep original or detected
-
-                    compressed_image_bytes = output_buffer.getvalue()
-                    asset_data_for_response["image_data_base64"] = base64.b64encode(compressed_image_bytes).decode('utf-8')
-                
-                except Exception as img_e:
-                    logging.warning(f"Could not process image for asset {asset_doc_raw.get('_id')}: {img_e}. Using original.")
-                    # Fallback to original if processing fails
-                    asset_data_for_response["image_data_base64"] = base64.b64encode(original_image_bytes).decode('utf-8')
-                    asset_data_for_response["image_content_type"] = content_type
-            
-            asset_data_for_response.pop("description_vector", None)
-            asset_data_for_response.pop("image_embedding", None)
-            asset_data_for_response.pop("image_data", None) # Remove original raw bytes
-
-            asset_resp = AssetResponse.model_validate(asset_data_for_response)
-            processed_assets.append(asset_resp)
-
-        except Exception as e:
-            logging.error(f"Error processing asset {asset_doc_raw.get('_id')}: {e}")
-            continue # Skip this asset or handle error appropriately
-
     return PaginatedAssetResponse(
-        assets=processed_assets,
-        total_assets=total_assets_count,
-        total_pages=total_pages,
-        current_page=page,
-        page_size=page_size
+        assets=batched_response.assets,
+        total_assets=batched_response.total_assets,
+        total_pages=batched_response.total_pages,
+        current_page=batched_response.current_page,
+        page_size=batched_response.page_size
     )
+
+@router.post("/cache/invalidate")
+async def invalidate_cache(type_filter: Optional[str] = None):
+    """Invalidate cache for specific type or all cache"""
+    try:
+        if cache_collection is None:
+            raise HTTPException(status_code=500, detail="Cache not configured")
+        
+        query = {}
+        if type_filter:
+            # Invalidate cache entries that match the type filter pattern
+            query = {"cache_key": {"$regex": f"^{type_filter}_"}}
+        
+        result = await cache_collection.delete_many(query)
+        
+        return {
+            "status": "success",
+            "deleted_entries": result.deleted_count,
+            "message": f"Cache invalidated for {'all entries' if not type_filter else f'type: {type_filter}'}"
+        }
+    except Exception as e:
+        logging.error(f"Cache invalidation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Cache invalidation failed: {e}")
 
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_asset(id: str):
