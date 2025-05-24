@@ -264,6 +264,11 @@ async def get_assets(
     """Original endpoint - redirects to batched version"""
     batched_response = await get_assets_batched(type, page, page_size, image_quality, max_image_width)
     
+    # Remove image_data_base64 from the response
+    for asset in batched_response.assets:
+        if hasattr(asset, 'image_data_base64'):
+            del asset.image_data_base64
+    
     return PaginatedAssetResponse(
         assets=batched_response.assets,
         total_assets=batched_response.total_assets,
