@@ -7,32 +7,40 @@ from pydantic_core import core_schema
 class PydanticObjectId(ObjectId):
     @classmethod
     def __get_pydantic_core_schema__(
-        cls, 
-        _source_type: Any, 
-        _handler: GetCoreSchemaHandler
+        cls, source_type: Any, handler: GetCoreSchemaHandler
     ) -> core_schema.CoreSchema:
-        return core_schema.union_schema([
-            core_schema.is_instance_schema(ObjectId),
-            core_schema.chain_schema([
-                core_schema.str_schema(),
-                core_schema.no_info_plain_validator_function(cls.validate),
+        return core_schema.json_or_python_schema(
+            json_schema=core_schema.str_schema(),
+            python_schema=core_schema.union_schema([
+                core_schema.is_instance_schema(ObjectId),
+                core_schema.chain_schema([
+                    core_schema.str_schema(),
+                    core_schema.no_info_plain_validator_function(cls.validate),
+                ])
             ]),
-        ])
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda x: str(x)
+            ),
+        )
 
     @classmethod
-    def validate(cls, v: str) -> ObjectId:
+    def validate(cls, v):
         if not ObjectId.is_valid(v):
             raise ValueError("Invalid ObjectId")
         return ObjectId(v)
 
-
 class MeshyMetadata(BaseModel):
     meshy_id: str
     glb_url: Optional[str] = None
+    fbx_url: Optional[str] = None  # Added
+    usdz_url: Optional[str] = None  # Added
+    obj_url: Optional[str] = None  # Added
     thumbnail_url: Optional[str] = None
     texture_prompt: Optional[str] = None
     texture_urls: Optional[List[dict[str, str]]] = None
     task_error: Optional[dict[str, Any]] = None
+    progress: Optional[int] = None  # Added
+    status: Optional[str] = None  # Added
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -52,41 +60,21 @@ class UsedAssets(BaseModel):
         json_encoders={ObjectId: str}
     )
 
-
 class GenerationBase(BaseModel):
     character_id: PydanticObjectId
-    image_url: Optional[str] = None
+    leo_id: Optional[str] = None  # Leo generation ID
+    image_url: Optional[str] = None # Leonardo url
     description: Optional[str] = None
     used_assets: Optional[List[UsedAssets]] = None
     description_vector: Optional[List[float]] = None
-    meshy: Optional[MeshyMetadata] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        json_encoders={ObjectId: str}
-    )
+    meshy: Optional[MeshyMetadata] = None  # Added meshy metadata
 
 class GenerationResponse(GenerationBase):
-    id: PydanticObjectId = Field(default_factory=PydanticObjectId, alias="_id")
+    id: PydanticObjectId = Field(alias="_id")
+    created_at: datetime
 
-    class Config:
-        json_encoders = {
-            ObjectId: str
-        }
-        schema_extra = {
-            "example": {
-                "_id": "507f1f77bcf86cd799439011",
-                "character_id": "507f1f77bcf86cd799439012",
-                "image_url": "https://example.com/image.png",
-                "description": "A character description",
-                "meshy": {
-                    "meshy_id": "mesh_123",
-                    "glb_url": "https://example.com/model.glb",
-                    "thumbnail_url": "https://example.com/thumbnail.png",
-                    "texture_prompt": "A texture prompt",
-                    "texture_urls": [{"url": "https://example.com/texture.png"}],
-                    "task_error": {"error_code": 404, "error_message": "Not Found"}
-                },
-                "created_at": datetime.utcnow()
-            }
-        }
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str},
+        populate_by_name=True
+    )

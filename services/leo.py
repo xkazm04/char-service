@@ -56,7 +56,7 @@ def create_asset_img(
         "userElements": [
             {
                 "userLoraId": element,
-                "weight": 0.9
+                "weight": 0.85 if element else 0.7,
             }
         ] if element else [],
         "modelId": "b2614463-296c-462a-9586-aafdb8f00e36",

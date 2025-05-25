@@ -128,6 +128,7 @@ class GenerationRequest(BaseModel):
     element: int = Field(None, description="Element akUUID, e.g., 67297 for Jinx")
     generation_id: Optional[str] = Field(None, description="Optional generation ID for retries")
     description: Optional[str] = Field(None, description="Description for the generation")
+    character_id: Optional[str] = Field(None, description="Character ID to associate with the generation")
     
 
 @router.post("/generation")
@@ -171,9 +172,10 @@ async def generate_and_save_gen_image(request: GenerationRequest):
             logger.warning(f"Failed to download image data from URL: {e}")
 
         saved_result = await save_generation(
-            character_id="682cfdfaebbb3e6ada96d357", 
+            character_id=request.character_id if request.character_id else "682cfdfaebbb3e6ada96d357", 
             image_url=image_url,
             description=request.description,
+            leo_id=generation_id,
         )
         
         if saved_result.get("status") == "error":
@@ -185,12 +187,12 @@ async def generate_and_save_gen_image(request: GenerationRequest):
         if "description_vector" in saved_result:
             del saved_result["description_vector"]
         # Cleanup   
-        try:  
-            delete_generation_api(generation_id)
-            logger.info(f"Deleted generation with ID: {generation_id}")
-        except Exception as e:
-            logger.error(f"Error in delete_generations: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e))
+        # try:  
+        #     delete_generation_api(generation_id)
+        #     logger.info(f"Deleted generation with ID: {generation_id}")
+        # except Exception as e:
+        #     logger.error(f"Error in delete_generations: {e}", exc_info=True)
+        #     raise HTTPException(status_code=500, detail=str(e))
             
         return {
             "status": "success", 

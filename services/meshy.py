@@ -1,6 +1,9 @@
 import requests
 import base64
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def generate_3d_asset_from_image(image_input, api_key, use_base64=False):
@@ -50,10 +53,11 @@ def generate_3d_asset_from_image(image_input, api_key, use_base64=False):
             "image_url": image_input,
             "ai_model": "meshy-5"
         }
+    logger.info(f"Sending request to Meshy API with payload: {payload}")
 
     response = requests.post(url, headers=headers, json=payload)
 
-    if response.status_code != 200:
+    if response.status_code == 400 or response.status_code == 422 or response.status_code == 500:
         raise Exception(
             f"API request failed with status code {response.status_code}: {response.text}")
 

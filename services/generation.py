@@ -27,6 +27,7 @@ def get_all_generations() -> List[Dict[str, Any]]:
 
 
 async def save_generation(
+    leo_id: str,
     character_id: str,
     image_url: Optional[str] = None,
     description: Optional[str] = None,
@@ -54,6 +55,7 @@ async def save_generation(
         
         # Create generation instance
         generation = GenerationBase(
+            leo_id=leo_id,
             character_id=char_id,
             image_url=image_url,
             description=description,
