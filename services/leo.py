@@ -43,12 +43,12 @@ def create_asset_img(
     width = 1280
     
     if element:
-        height = 1280
-        width = 720
+        height = 1024
+        width = 1024
         
     url = f"{LEONARDO_API_BASE_URL}/generations"
     instructions = f"""
-        A stylized, hand-drawn illustration of {gen}, centered, isolated on a smooth dark gray background. Emphasize clean lines and bold shading. Minimalist surrounding elements. High detail, concept art style, suitable for game asset previews.
+        {gen}
     """
     payload = {
         "height": height,
@@ -56,7 +56,7 @@ def create_asset_img(
         "userElements": [
             {
                 "userLoraId": element,
-                "weight": 0.85 if element else 0.7,
+                "weight": 0.9,
             }
         ] if element else [],
         "modelId": "b2614463-296c-462a-9586-aafdb8f00e36",

@@ -29,14 +29,36 @@ async def get_generations(
         if not ObjectId.is_valid(character_id):
             raise HTTPException(
                 status_code=400, detail="Invalid character_id format")
-        filter_query["character_id"] = ObjectId(character_id)
+        
+        # Convert to ObjectId for the query
+        character_obj_id = ObjectId(character_id)
+        
+        # Query for both ObjectId and string formats to handle data inconsistency
+        filter_query["character_id"] = {
+            "$in": [character_obj_id, character_id]
+        }
+        
+        # Debug: Log the query being executed
+        logger.info(f"Querying with character_id: {character_id} (ObjectId: {character_obj_id})")
+        
+        # Debug: Check what's actually in the database
+        sample_docs = await generation_collection.find({}).limit(5).to_list(5)
+        logger.info(f"Sample documents in collection:")
+        for doc in sample_docs:
+            logger.info(f"  - character_id: {doc.get('character_id')} (type: {type(doc.get('character_id'))})")
 
     projection = {"description_vector": 0}
+
+    # Debug: Log the final filter query
+    logger.info(f"Final filter query: {filter_query}")
 
     generations = await generation_collection.find(
         filter_query,
         projection
     ).skip(skip).limit(limit).to_list(limit)
+    
+    # Debug: Log the results
+    logger.info(f"Found {len(generations)} generations matching the query")
 
     return generations
 

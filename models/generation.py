@@ -32,15 +32,15 @@ class PydanticObjectId(ObjectId):
 class MeshyMetadata(BaseModel):
     meshy_id: str
     glb_url: Optional[str] = None
-    fbx_url: Optional[str] = None  # Added
-    usdz_url: Optional[str] = None  # Added
-    obj_url: Optional[str] = None  # Added
+    fbx_url: Optional[str] = None
+    usdz_url: Optional[str] = None
+    obj_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
     texture_prompt: Optional[str] = None
     texture_urls: Optional[List[dict[str, str]]] = None
     task_error: Optional[dict[str, Any]] = None
-    progress: Optional[int] = None  # Added
-    status: Optional[str] = None  # Added
+    progress: Optional[int] = None
+    status: Optional[str] = None
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -51,27 +51,38 @@ class UsedAssets(BaseModel):
     id: str
     name: str
     type: str
-    category: str
+    subcategory: str
     description: str
     image_data: str
+    # Keep _id for backward compatibility
+    _id: Optional[str] = None
+    url: Optional[str] = None
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
         json_encoders={ObjectId: str}
     )
 
+    def __init__(self, **data):
+        # Ensure _id is set from id if not provided
+        if 'id' in data and '_id' not in data:
+            data['_id'] = data['id']
+        elif '_id' in data and 'id' not in data:
+            data['id'] = data['_id']
+        super().__init__(**data)
+
 class GenerationBase(BaseModel):
     character_id: PydanticObjectId
-    leo_id: Optional[str] = None  # Leo generation ID
-    image_url: Optional[str] = None # Leonardo url
+    leo_id: Optional[str] = None
+    image_url: Optional[str] = None
     description: Optional[str] = None
     used_assets: Optional[List[UsedAssets]] = None
     description_vector: Optional[List[float]] = None
-    meshy: Optional[MeshyMetadata] = None  # Added meshy metadata
+    meshy: Optional[MeshyMetadata] = None
+    created_at: datetime = Field(default_factory=datetime.now)
 
 class GenerationResponse(GenerationBase):
     id: PydanticObjectId = Field(alias="_id")
-    created_at: datetime
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,

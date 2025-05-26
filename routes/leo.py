@@ -4,9 +4,11 @@ from services.leo import get_generation, delete_generation_api, create_asset_img
 from services.generation import save_generation
 from services.image_save import save_asset_with_image, download_image
 from models.asset import AssetCreate
+from models.generation import UsedAssets
 import asyncio
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
+from bson import ObjectId
 
 # Fix the logger setup
 logging.basicConfig(level=logging.INFO)
@@ -123,18 +125,40 @@ async def generate_and_save_asset_image(request: AssetImageGenerationRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class UsedAssetRequest(BaseModel):
+    id: str
+    name: str
+    type: str
+    subcategory: str
+    description: str
+    image_data: str
+
 class GenerationRequest(BaseModel):
     gen: str 
     element: int = Field(None, description="Element akUUID, e.g., 67297 for Jinx")
     generation_id: Optional[str] = Field(None, description="Optional generation ID for retries")
     description: Optional[str] = Field(None, description="Description for the generation")
     character_id: Optional[str] = Field(None, description="Character ID to associate with the generation")
+    used_assets: Optional[List[UsedAssetRequest]] = Field(None, description="List of assets used in generation")
     
 
 @router.post("/generation")
 async def generate_and_save_gen_image(request: GenerationRequest):
     try:
         logger.info(f"Received gen-save request with gen: {request.gen}")
+        logger.info(f"Used assets count: {len(request.used_assets) if request.used_assets else 0}")
+        
+        # Validate character_id if provided
+        character_id = request.character_id
+        if character_id and not ObjectId.is_valid(character_id):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid character_id format: {character_id}"
+            )
+        
+        # Use default character_id if none provided
+        if not character_id:
+            character_id = "682cfdfaebbb3e6ada96d357"
         
         # Handle previous generation if needed
         if request.generation_id:
@@ -145,7 +169,7 @@ async def generate_and_save_gen_image(request: GenerationRequest):
                 logger.warning(f"Failed to delete previous generation {request.generation_id}: {e}")
 
         # Generate image
-        create_response = create_asset_img(gen=request.gen)
+        create_response = create_asset_img(gen=request.gen, element=request.element)
         
         generation_id = create_response["sdGenerationJob"]["generationId"]
         logger.info(f"Created new generation with ID: {generation_id}")
@@ -171,17 +195,36 @@ async def generate_and_save_gen_image(request: GenerationRequest):
         except Exception as e:
             logger.warning(f"Failed to download image data from URL: {e}")
 
+        # Transform used assets to the proper format
+        used_assets_transformed = None
+        if request.used_assets:
+            used_assets_transformed = [
+                UsedAssets(
+                    id=asset.id,
+                    _id=asset.id,  # Set both for compatibility
+                    name=asset.name,
+                    type=asset.type,
+                    subcategory=asset.subcategory,
+                    description=asset.description,
+                    image_data=asset.image_data,
+                    url=f"/assets/image/{asset.id}"  # Generate URL for frontend
+                )
+                for asset in request.used_assets
+            ]
+            logger.info(f"Transformed {len(used_assets_transformed)} used assets")
+
         saved_result = await save_generation(
-            character_id=request.character_id if request.character_id else "682cfdfaebbb3e6ada96d357", 
+            character_id=character_id, 
             image_url=image_url,
             description=request.description,
             leo_id=generation_id,
+            used_assets=used_assets_transformed
         )
         
         if saved_result.get("status") == "error":
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to save asset: {saved_result.get('message')}"
+                detail=f"Failed to save generation: {saved_result.get('message')}"
             )
         
         if "description_vector" in saved_result:

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from bson import ObjectId
 import os
@@ -6,6 +7,7 @@ from services.meshy import generate_3d_asset_from_image, get_image_to_3d_task_st
 from database import generation_collection
 from typing import Optional, Dict, List, Any
 import logging
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -186,5 +188,65 @@ async def get_model_status(task_id: str, generation_id: Optional[str] = None):
         }
     except Exception as e:
         logger.error(f"Error getting model status for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/proxy/{task_id}/{file_type}")
+async def proxy_model_file(task_id: str, file_type: str):
+    """
+    Proxy 3D model files from Meshy to avoid CORS issues.
+    file_type can be: glb, fbx, usdz, obj, thumbnail
+    """
+    try:
+        # Get the generation with the meshy data
+        generation = await generation_collection.find_one({"meshy.meshy_id": task_id})
+        if not generation or "meshy" not in generation:
+            raise HTTPException(status_code=404, detail="Model not found")
+        
+        meshy_data = generation["meshy"]
+        
+        # Get the appropriate URL based on file_type
+        url_mapping = {
+            "glb": meshy_data.get("glb_url"),
+            "fbx": meshy_data.get("fbx_url"),
+            "usdz": meshy_data.get("usdz_url"),
+            "obj": meshy_data.get("obj_url"),
+            "thumbnail": meshy_data.get("thumbnail_url")
+        }
+        
+        model_url = url_mapping.get(file_type)
+        if not model_url:
+            raise HTTPException(status_code=404, detail=f"File type {file_type} not available")
+        
+        # Fetch the file from Meshy
+        response = requests.get(model_url, stream=True)
+        response.raise_for_status()
+        
+        # Determine content type
+        content_type_mapping = {
+            "glb": "model/gltf-binary",
+            "fbx": "application/octet-stream",
+            "usdz": "model/vnd.usdz+zip",
+            "obj": "application/object",
+            "thumbnail": "image/jpeg"
+        }
+        
+        content_type = content_type_mapping.get(file_type, "application/octet-stream")
+        
+        # Return the file with proper headers
+        return StreamingResponse(
+            iter([response.content]),
+            media_type=content_type,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET",
+                "Cache-Control": "public, max-age=3600"
+            }
+        )
+        
+    except requests.RequestException as e:
+        logger.error(f"Error fetching model file: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch model file")
+    except Exception as e:
+        logger.error(f"Error proxying model file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

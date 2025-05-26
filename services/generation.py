@@ -1,9 +1,10 @@
 import logging 
 from typing import List, Dict, Any, Optional
 from services.image_save import download_image, get_embedding, serialize_for_json
-from models.generation import GenerationBase
+from models.generation import GenerationBase, UsedAssets
 from bson import ObjectId
 from database import generation_collection
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,15 +32,26 @@ async def save_generation(
     character_id: str,
     image_url: Optional[str] = None,
     description: Optional[str] = None,
+    used_assets: Optional[List[UsedAssets]] = None,
 ) -> Dict[str, Any]:
     """
     Save generation data to the database, including image data if URL is provided.
     """
     try:
         logger.info(f"Starting save_generation for character: {character_id}")
+        logger.info(f"Used assets provided: {len(used_assets) if used_assets else 0}")
         
         # Convert character_id to ObjectId if it's a string
-        char_id = ObjectId(character_id) if isinstance(character_id, str) else character_id
+        if isinstance(character_id, str):
+            if not ObjectId.is_valid(character_id):
+                logger.error(f"Invalid ObjectId format: {character_id}")
+                return {
+                    "status": "error",
+                    "message": f"Invalid character_id format: {character_id}"
+                }
+            char_id = ObjectId(character_id)
+        else:
+            char_id = character_id
 
         description_embedding = await get_embedding(description)
         logger.info(f"Created description embedding of length: {len(description_embedding)}")
@@ -52,19 +64,34 @@ async def save_generation(
             image_data, content_type = await download_image(image_url)
             logger.info(f"Downloaded image of type: {content_type}, size: {len(image_data) / 1024:.2f} KB")
     
+        # Process used assets if provided
+        processed_used_assets = None
+        if used_assets:
+            processed_used_assets = []
+            for asset in used_assets:
+                # Convert UsedAssets model to dict for MongoDB
+                asset_dict = asset.model_dump() if hasattr(asset, 'model_dump') else asset.dict()
+                processed_used_assets.append(asset_dict)
+            logger.info(f"Processed {len(processed_used_assets)} used assets for storage")
         
-        # Create generation instance
+        # Create generation instance with current timestamp
         generation = GenerationBase(
             leo_id=leo_id,
             character_id=char_id,
             image_url=image_url,
             description=description,
             description_vector=description_embedding,
+            used_assets=processed_used_assets,
+            created_at=datetime.now()  # Explicitly set created_at
         )
         
-        # Convert to dict for MongoDB insertion
-        generation_to_insert = generation.model_dump(by_alias=True)
+        # Convert to dict for MongoDB insertion, but manually handle character_id as ObjectId
+        generation_to_insert = generation.model_dump(by_alias=True, exclude={'character_id'})
+        # Manually add character_id as ObjectId to preserve the type in MongoDB
+        generation_to_insert['character_id'] = char_id
+        
         logger.info(f"Prepared generation for insertion with fields: {list(generation_to_insert.keys())}")
+        logger.info(f"character_id type in document: {type(generation_to_insert['character_id'])}")
         
         # Insert into database
         result = await generation_collection.insert_one(generation_to_insert)
