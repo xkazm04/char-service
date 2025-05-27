@@ -1,7 +1,7 @@
 import logging 
 from typing import List, Dict, Any, Optional
 from services.image_save import download_image, get_embedding, serialize_for_json
-from models.generation import GenerationBase, UsedAssets
+from models.generation import GenerationBase, UsedAssets, GenerationCreate, Generation
 from bson import ObjectId
 from database import generation_collection
 from datetime import datetime
@@ -126,3 +126,31 @@ async def save_generation(
             "status": "error",
             "message": f"Error saving generation: {str(e)}"
         }
+        
+class GenerationService:
+    async def create_generation(self, generation_data: GenerationCreate) -> Generation:
+        """Create a new generation with embedding."""
+        try:
+            # Generate embedding data
+            searchable_text, embedding = generation_data.generate_embedding_data()
+            
+            # Create generation document
+            generation_dict = generation_data.dict()
+            generation_dict.update({
+                "id": str(ObjectId()),
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+                "status": "pending",
+                "embedding": embedding,
+                "searchable_text": searchable_text
+            })
+            
+            # Insert into database
+            result = await self.collection.insert_one(generation_dict)
+            generation_dict["_id"] = str(result.inserted_id)
+            
+            return Generation(**generation_dict)
+            
+        except Exception as e:
+            logger.error(f"Failed to create generation: {e}")
+            raise

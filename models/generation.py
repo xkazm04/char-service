@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, ConfigDict, GetCoreSchemaHandler
 from datetime import datetime
 from bson import ObjectId
 from pydantic_core import core_schema
+from services.embedding import embedding_service
 
 class PydanticObjectId(ObjectId):
     @classmethod
@@ -41,6 +42,9 @@ class MeshyMetadata(BaseModel):
     task_error: Optional[dict[str, Any]] = None
     progress: Optional[int] = None
     status: Optional[str] = None
+    is_polling: Optional[bool] = False
+    last_polled: Optional[datetime] = None
+    polling_attempts: Optional[int] = 0
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -54,7 +58,6 @@ class UsedAssets(BaseModel):
     subcategory: str
     description: str
     image_data: str
-    # Keep _id for backward compatibility
     _id: Optional[str] = None
     url: Optional[str] = None
 
@@ -64,7 +67,6 @@ class UsedAssets(BaseModel):
     )
 
     def __init__(self, **data):
-        # Ensure _id is set from id if not provided
         if 'id' in data and '_id' not in data:
             data['_id'] = data['id']
         elif '_id' in data and 'id' not in data:
@@ -80,6 +82,9 @@ class GenerationBase(BaseModel):
     description_vector: Optional[List[float]] = None
     meshy: Optional[MeshyMetadata] = None
     created_at: datetime = Field(default_factory=datetime.now)
+    # Add 3D generation status tracking
+    is_3d_generating: Optional[bool] = False
+    has_3d_model: Optional[bool] = False
 
 class GenerationResponse(GenerationBase):
     id: PydanticObjectId = Field(alias="_id")
@@ -89,3 +94,30 @@ class GenerationResponse(GenerationBase):
         json_encoders={ObjectId: str},
         populate_by_name=True
     )
+
+class Generation(GenerationResponse):
+    # Add vector embedding field
+    embedding: Optional[List[float]] = Field(None, description="Vector embedding for semantic search")
+    searchable_text: Optional[str] = Field(None, description="Preprocessed text for embedding generation")
+    
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {ObjectId: str}
+
+class GenerationCreate(Generation):
+    def generate_embedding_data(self) -> tuple[str, List[float]]:
+        """Generate searchable text and embedding for this generation."""
+        generation_dict = self.dict()
+        searchable_text = embedding_service.create_searchable_text(generation_dict)
+        embedding = embedding_service.generate_embedding(searchable_text)
+        
+        return searchable_text, embedding
+
+class GenerationSearchQuery(BaseModel):
+    query: str = Field(..., description="Natural language search query")
+    limit: int = Field(10, ge=1, le=50, description="Maximum number of results")
+    min_score: float = Field(0.5, ge=0.0, le=1.0, description="Minimum similarity score")
+
+class GenerationSearchResult(BaseModel):
+    generation: Generation
+    score: float = Field(..., description="Similarity score (0-1)")

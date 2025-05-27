@@ -1,37 +1,14 @@
 import logging
 import numpy as np
-from openai import OpenAI
-import os
+
 from typing import List, Dict, Any, Optional
 from models.asset import AssetCreate, AssetDB
 from database import asset_collection
 from utils.db_helpers import serialize_for_json
-
+from services.atlas_asset_search import asset_vector_search_service
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-api-key-here")
-
-async def get_embedding(text: str, api_key: Optional[str] = None) -> List[float]:
-    """
-    Generate embeddings for text using OpenAI's text-embedding-ada-002 model
-    Updated for OpenAI Python SDK 1.0.0+
-    """
-    try:
-        client = OpenAI(api_key=api_key or OPENAI_API_KEY)
-        
-
-        response = client.embeddings.create(
-            model="text-embedding-ada-002",
-            input=text
-        )
-        
-        embedding = response.data[0].embedding
-        return embedding
-        
-    except Exception as e:
-        logger.error(f"Error generating embedding: {e}")
-        return [0.0] * 1536  # Default size for ada-002 embeddings
+from utils.openai_embeddings import get_embedding
 
 def calculate_similarity(vec1: List[float], vec2: List[float]) -> float:
     """
@@ -156,3 +133,70 @@ async def save_asset_with_vector(asset: AssetCreate, embedding: Optional[List[fl
             "message": f"Error saving asset: {str(e)}",
             "description_vector": embedding if embedding else []
         }
+        
+async def validate_asset_hybrid(
+    asset: AssetCreate, 
+    api_key: Optional[str] = None,
+    use_atlas_search: bool = True,
+    threshold: float = 0.95
+) -> Dict[str, Any]:
+    """
+    Enhanced asset validation using Atlas Vector Search or fallback to original method.
+    """
+    try:
+        if use_atlas_search:
+            # Use new Atlas Vector Search method
+            similar_assets_atlas = await asset_vector_search_service.find_similar_assets_atlas(
+                asset, threshold=threshold
+            )
+            
+            if similar_assets_atlas:
+                # Convert AssetSearchResult to the expected format
+                similar_assets_formatted = []
+                for result in similar_assets_atlas:
+                    similar_assets_formatted.append({
+                        "id": str(result.asset.id),
+                        "name": result.asset.name,
+                        "type": result.asset.type,
+                        "description": result.asset.description,
+                        "image_url": result.asset.image_url,
+                        "similarity": result.similarity_mongo,  # Use MongoDB similarity score
+                        "similarity_mongo": result.similarity_mongo  # Include new attribute
+                    })
+                
+                # Generate embedding for response (without exposing it to frontend)
+                text_to_embed = f"{asset.name} {asset.description or ''}"
+                embedding = await get_embedding(text_to_embed, api_key)
+                
+                return {
+                    "status": "similar_found",
+                    "message": f"Found {len(similar_assets_formatted)} similar assets using Atlas Vector Search",
+                    "similar_assets": similar_assets_formatted,
+                    "description_vector": embedding,
+                    "search_method": "atlas_vector_search"
+                }
+            else:
+                # No similar assets found
+                text_to_embed = f"{asset.name} {asset.description or ''}"
+                embedding = await get_embedding(text_to_embed, api_key)
+                
+                return {
+                    "status": "ok",
+                    "message": "No similar assets found using Atlas Vector Search",
+                    "similar_assets": [],
+                    "description_vector": embedding,
+                    "search_method": "atlas_vector_search"
+                }
+        else:
+            # Fallback to original method
+            logger.info("Using original validation method as fallback")
+            result = await validate_asset(asset, api_key)
+            result["search_method"] = "manual_similarity"
+            return result
+            
+    except Exception as e:
+        logger.error(f"Atlas Vector Search validation failed, falling back to original method: {e}")
+        # Fallback to original method on error
+        result = await validate_asset(asset, api_key)
+        result["search_method"] = "manual_similarity_fallback"
+        return result

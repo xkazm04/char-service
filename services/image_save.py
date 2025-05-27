@@ -145,3 +145,4 @@ async def save_asset_with_image(
             "message": f"Error saving asset with image: {str(e)}",
             "description_vector": description_embedding if description_embedding else []
         }
+

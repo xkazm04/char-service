@@ -2,9 +2,9 @@ from fastapi import APIRouter, Body, HTTPException, status, Form, Response, Quer
 from fastapi.responses import JSONResponse
 from typing import List, Optional
 from services.image_analyze import analyze_image, analyze_with_gemini
-from services.asset_save import save_asset_with_vector, validate_asset
+from services.asset_save import save_asset_with_vector, validate_asset, validate_asset_hybrid
 from fastapi import UploadFile, File
-from models.asset import AssetCreate, AssetResponse, PaginatedAssetResponse, AssetDB
+from models.asset import AssetCreate, AssetResponse, PaginatedAssetResponse
 from database import asset_collection
 from pydantic import BaseModel
 from bson import ObjectId
@@ -348,15 +348,24 @@ async def create_asset(asset: AssetCreate = Body(...)):
         raise HTTPException(status_code=500, detail=f"Error creating asset: {str(e)}")
 
 @router.post("/validate", status_code=status.HTTP_200_OK)
-async def validate_asset_vector(asset: AssetCreate = Body(...)):
+async def validate_asset_vector(
+    asset: AssetCreate = Body(...),
+    use_atlas_search: bool = Query(False, description="Use enhanced Atlas Vector Search")
+):
     """
-    Validate an asset by checking for similar existing assets
-    Returns similar assets if found but omits embedding vector
+    Validate an asset by checking for similar existing assets.
+    Now supports both original method and enhanced Atlas Vector Search.
     """
     try:
-        api_key = None  
-        result = await validate_asset(asset, api_key)
+        if use_atlas_search:
+            # Use enhanced validation with Atlas Vector Search
+            result = await validate_asset_hybrid(asset, use_atlas_search=True)
+        else:
+            # Use original validation method (backward compatibility)
+            api_key = None  
+            result = await validate_asset(asset, api_key)
         
+        # Remove description_vector before returning to frontend
         if "description_vector" in result:
             del result["description_vector"]
             
@@ -473,3 +482,26 @@ async def get_asset_image(asset_id: str):
     except Exception as e:
         logging.error(f"Error retrieving asset image: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    
+    
+# from google.cloud import storage
+# import tempfile
+# import os
+
+# class CloudStorageService:
+#     def __init__(self, bucket_name: str):
+#         self.client = storage.Client()
+#         self.bucket = self.client.bucket(bucket_name)
+    
+#     async def upload_temp_file(self, file_data: bytes, filename: str) -> str:
+#         """Upload file to Cloud Storage and return public URL"""
+#         blob = self.bucket.blob(f"temp/{filename}")
+#         blob.upload_from_string(file_data)
+#         return blob.public_url
+    
+#     async def download_to_temp(self, blob_name: str) -> str:
+#         """Download blob to temporary file and return path"""
+#         blob = self.bucket.blob(blob_name)
+#         temp_file = tempfile.NamedTemporaryFile(delete=False)
+#         blob.download_to_filename(temp_file.name)
+#         return temp_file.name

@@ -34,10 +34,13 @@ def delete_generation_api(generation_id: str):
 class userLoraId: 
     akUUID: int
     weight: int = 0.9
+    preset: str = 'DYNAMIC'
 
 def create_asset_img(
         gen: str, 
-        element: Optional[userLoraId] = None
+        element: Optional[userLoraId] = None,
+        weight: Optional[float] = 0.9,
+        preset: Optional[str] = 'DYNAMIC'
     ): 
     height = 720
     width = 1280
@@ -53,14 +56,14 @@ def create_asset_img(
     payload = {
         "height": height,
         "width": width,
+        'presetStyle': preset if preset else 'DYNAMIC',
         "userElements": [
             {
                 "userLoraId": element,
-                "weight": 0.9,
+                "weight": weight,
             }
         ] if element else [],
         "modelId": "b2614463-296c-462a-9586-aafdb8f00e36",
-        "presetStyle": 'DYNAMIC',
         "prompt": instructions,
         "num_images": 1,
     }

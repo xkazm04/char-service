@@ -137,6 +137,8 @@ class GenerationRequest(BaseModel):
     gen: str 
     element: int = Field(None, description="Element akUUID, e.g., 67297 for Jinx")
     generation_id: Optional[str] = Field(None, description="Optional generation ID for retries")
+    weight: Optional[float] = Field(None, description="Weight for the generation")
+    preset: Optional[str] = Field(None, description="Preset for the generation")
     description: Optional[str] = Field(None, description="Description for the generation")
     character_id: Optional[str] = Field(None, description="Character ID to associate with the generation")
     used_assets: Optional[List[UsedAssetRequest]] = Field(None, description="List of assets used in generation")
@@ -169,7 +171,7 @@ async def generate_and_save_gen_image(request: GenerationRequest):
                 logger.warning(f"Failed to delete previous generation {request.generation_id}: {e}")
 
         # Generate image
-        create_response = create_asset_img(gen=request.gen, element=request.element)
+        create_response = create_asset_img(gen=request.gen, element=request.element, weight=request.weight, preset=request.preset)
         
         generation_id = create_response["sdGenerationJob"]["generationId"]
         logger.info(f"Created new generation with ID: {generation_id}")

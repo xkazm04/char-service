@@ -96,3 +96,5 @@ async def delete_generation(
         raise HTTPException(status_code=404, detail="Generation not found")
 
     return None
+
+
