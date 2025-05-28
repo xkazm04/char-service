@@ -1,13 +1,13 @@
 import logging
 from fastapi import APIRouter, HTTPException
-from services.leo import get_generation, delete_generation_api, create_asset_img
+from services.leo import get_generation, delete_generation_api, create_asset_img, create_asset_img_with_preview
 from services.generation import save_generation
-from services.image_save import save_asset_with_image, download_image
+from services.image_save import download_image
 from models.asset import AssetCreate
 from models.generation import UsedAssets
 import asyncio
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from bson import ObjectId
 
 # Fix the logger setup
@@ -38,6 +38,9 @@ class AssetImageGenerationRequest(BaseModel):
 
 @router.post("/asset")
 async def generate_and_save_asset_image(request: AssetImageGenerationRequest):
+    """
+    Generate asset image and return preview URL immediately while processing in background
+    """
     try:
         logger.info(f"Received asset-save request with gen: {request.gen}")
         
@@ -52,72 +55,24 @@ async def generate_and_save_asset_image(request: AssetImageGenerationRequest):
                 detail="Asset missing required fields (type, name, or gen)"
             )
         
-        # Handle previous generation if needed
-        if request.generation_id:
-            try:
-                logger.info(f"Deleting previous generation with ID: {request.generation_id}")
-                delete_generation_api(request.generation_id)
-            except Exception as e:
-                logger.warning(f"Failed to delete previous generation {request.generation_id}: {e}")
-
-        # Generate image
-        create_response = create_asset_img(gen=request.gen)
-        
-        generation_id = create_response["sdGenerationJob"]["generationId"]
-        logger.info(f"Created new generation with ID: {generation_id}")
-        images = None
-        for attempt in range(12):  # 12 attempts x 5s = 60s max
-            try:
-                images = get_generation(generation_id)
-                if images:  
-                    logger.info(f"Images found after {attempt + 1} attempts.")
-                    break
-            except Exception as e:
-                logger.warning(f"Polling attempt {attempt + 1} failed: {e}")
-
-            await asyncio.sleep(5)  # Wait 5 seconds between polling attempts
-        
-        if not images:
-            raise HTTPException(status_code=408, detail="Image generation timed out.")
-        
-        image_url = images[0]["url"]
-        asset = request.asset
-        if not asset.gen:
-            asset.gen = request.gen
-        
-        try:
-            image_data, content_type = await download_image(image_url)
-            asset.image_data = image_data
-            logger.info(f"Downloaded image data from {image_url}: {len(image_data)} bytes")
-        except Exception as e:
-            logger.warning(f"Failed to download image data from URL: {e}")
-            # Continue with saving even if image download fails
-        
-        # Now save the asset with image data
-        saved_result = await save_asset_with_image(asset, image_url)
-        
-        if saved_result.get("status") == "error":
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Failed to save asset: {saved_result.get('message')}"
-            )
-        
-        if "description_vector" in saved_result:
-            del saved_result["description_vector"]
-        # Cleanup   
-        try:  
-            delete_generation_api(generation_id)
-            logger.info(f"Deleted generation with ID: {generation_id}")
-        except Exception as e:
-            logger.error(f"Error in delete_generations: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e))
-            
-        return {
-            "status": "success", 
-            "asset": saved_result,
-            "generation_id": generation_id
+        # Convert AssetCreate to dict for the preview function
+        asset_data = {
+            "type": request.asset.type,
+            "name": request.asset.name,
+            "gen": request.gen,  # Use the gen from request
+            "description": request.asset.description or "",
+            "subcategory": request.asset.subcategory or "",
+            "metadata": request.asset.metadata or {}
         }
-            
+        
+        # Use the preview function that returns Leonardo URL immediately
+        result = create_asset_img_with_preview(
+            gen=request.gen,
+            asset_data=asset_data
+        )
+        
+        return result
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -249,4 +204,40 @@ async def generate_and_save_gen_image(request: GenerationRequest):
         raise
     except Exception as e:
         logger.error(f"Error in generate_and_save_asset_image: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AssetGenerationRequest(BaseModel):
+    gen: str
+    asset: Dict[str, Any]
+    generation_id: Optional[str] = None
+    name: Optional[str] = None
+    type: Optional[str] = None
+
+@router.post("/asset-preview")
+async def generate_asset_with_preview(request: AssetGenerationRequest):
+    """
+    Generate asset image and return preview URL immediately while processing in background
+    """
+    try:
+        logger.info(f"Received asset preview request with gen: {request.gen}")
+        
+        # Prepare asset data for background processing
+        asset_data = {
+            **request.asset,
+            "name": request.name or request.asset.get("name", "Unnamed Asset"),
+            "type": request.type or request.asset.get("type", "Uncategorized"),
+            "gen": request.gen
+        }
+        
+        # Generate with immediate preview
+        result = create_asset_img_with_preview(
+            gen=request.gen,
+            asset_data=asset_data
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in generate_and_save_asset: {e}")
         raise HTTPException(status_code=500, detail=str(e))

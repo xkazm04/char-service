@@ -1,9 +1,7 @@
-from fastapi import APIRouter, Body, HTTPException, status, Form, Response, Query
+from fastapi import APIRouter, Body, HTTPException, status, Response, Query
 from fastapi.responses import JSONResponse
 from typing import List, Optional
-from services.image_analyze import analyze_image, analyze_with_gemini
 from services.asset_save import save_asset_with_vector, validate_asset, validate_asset_hybrid
-from fastapi import UploadFile, File
 from models.asset import AssetCreate, AssetResponse, PaginatedAssetResponse
 from database import asset_collection
 from pydantic import BaseModel
@@ -14,24 +12,13 @@ import logging
 import io
 from PIL import Image
 import asyncio
-from datetime import datetime, timedelta
-import hashlib
-import json
+from datetime import datetime
+from utils.cached_batch import generate_cache_key, get_cached_batch, set_cached_batch
 
 router = APIRouter()
 logging.basicConfig(level=logging.INFO)
 
-# Cache collection for storing processed asset batches
-cache_collection = None  # Initialize this with your database
-
-class ModelConfig(BaseModel):
-    enabled: bool
-    apiKey: Optional[str] = None
-
-class AnalysisConfig(BaseModel):
-    openai: ModelConfig
-    gemini: ModelConfig
-    groq: ModelConfig
+cache_collection = None  
 
 class AssetBatchResponse(BaseModel):
     assets: List[AssetResponse]
@@ -42,50 +29,6 @@ class AssetBatchResponse(BaseModel):
     page_size: int
     cache_key: str
 
-def generate_cache_key(type_filter: Optional[str], page: int, page_size: int, image_quality: int, max_image_width: Optional[int]) -> str:
-    """Generate a cache key based on query parameters"""
-    params = f"{type_filter}_{page}_{page_size}_{image_quality}_{max_image_width}"
-    return hashlib.md5(params.encode()).hexdigest()
-
-async def get_cached_batch(cache_key: str) -> Optional[dict]:
-    """Get cached batch from MongoDB cache collection"""
-    try:
-        if cache_collection is None:
-            return None
-        
-        cached = await cache_collection.find_one({
-            "cache_key": cache_key,
-            "expires_at": {"$gt": datetime.utcnow()}
-        })
-        
-        if cached:
-            logging.info(f"Cache hit for key: {cache_key}")
-            return cached.get("data")
-        
-        return None
-    except Exception as e:
-        logging.warning(f"Cache retrieval error: {e}")
-        return None
-
-async def set_cached_batch(cache_key: str, data: dict, ttl_hours: int = 24):
-    """Cache batch data in MongoDB with TTL"""
-    try:
-        if cache_collection is None:
-            return
-        
-        await cache_collection.replace_one(
-            {"cache_key": cache_key},
-            {
-                "cache_key": cache_key,
-                "data": data,
-                "created_at": datetime.utcnow(),
-                "expires_at": datetime.utcnow() + timedelta(hours=ttl_hours)
-            },
-            upsert=True
-        )
-        logging.info(f"Cached batch with key: {cache_key}")
-    except Exception as e:
-        logging.warning(f"Cache storage error: {e}")
 
 @router.get("/batched", response_model=AssetBatchResponse)
 async def get_assets_batched(
@@ -101,7 +44,7 @@ async def get_assets_batched(
     cache_key = generate_cache_key(type, page, page_size, image_quality, max_image_width)
     
     # Try to get from cache first
-    cached_data = await get_cached_batch(cache_key)
+    cached_data = await get_cached_batch(cache_key, cache_collection)
     if cached_data:
         return AssetBatchResponse(**cached_data)
     
@@ -358,10 +301,8 @@ async def validate_asset_vector(
     """
     try:
         if use_atlas_search:
-            # Use enhanced validation with Atlas Vector Search
             result = await validate_asset_hybrid(asset, use_atlas_search=True)
         else:
-            # Use original validation method (backward compatibility)
             api_key = None  
             result = await validate_asset(asset, api_key)
         
@@ -373,87 +314,6 @@ async def validate_asset_vector(
     except Exception as e:
         logging.error(f"Error validating asset: {e}")
         raise HTTPException(status_code=500, detail=f"Error validating asset: {str(e)}")
-
-@router.post("/analyze")
-async def analyze_asset_image(
-    file: UploadFile = File(...),
-    config: str = Form(...)
-):
-    """
-    Analyze an uploaded image using selected models based on configuration.
-    Config parameter specifies which models to use and provides API keys if needed.
-    """
-    contents = await file.read()
-    logging.info(f"Received file: {file.filename} of size {len(contents)} bytes")
-    temp_path = f"/tmp/{file.filename}"
-    with open(temp_path, "wb") as f:
-        f.write(contents)
-    
-    logging.info(f"Saved file to temporary path: {temp_path}")
-
-    try:
-        config_dict = json.loads(config)
-        analysis_config = AnalysisConfig(**config_dict)
-    except Exception as e:
-        logging.error(f"Error parsing configuration: {e}")
-        raise HTTPException(status_code=400, detail=f"Invalid configuration format: {str(e)}")
-    
-    if not any([analysis_config.openai.enabled, analysis_config.gemini.enabled, analysis_config.groq.enabled]):
-        raise HTTPException(status_code=400, detail="At least one model must be enabled")
-    
-    tasks = []
-    async def run_blocking(func, *args, **kwargs):
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
-    
-    results = {
-        "groq": [],
-        "openai": [],
-        "gemini": []
-    }
-    
-    if analysis_config.groq.enabled:
-        api_key = analysis_config.groq.apiKey if analysis_config.groq.apiKey else None
-        tasks.append(("groq", run_blocking(analyze_image, temp_path, "groq", api_key)))
-    
-    if analysis_config.openai.enabled:
-        api_key = analysis_config.openai.apiKey if analysis_config.openai.apiKey else None
-        tasks.append(("openai", run_blocking(analyze_image, temp_path, "openai", api_key)))
-    
-    if analysis_config.gemini.enabled:
-        api_key = analysis_config.gemini.apiKey if analysis_config.gemini.apiKey else None
-        tasks.append(("gemini", run_blocking(analyze_with_gemini, temp_path, api_key)))
-    
-    try:
-        for model_name, task in tasks:
-            try:
-                result = await asyncio.wait_for(task, timeout=120)
-                if isinstance(result, list):
-                    results[model_name] = result
-                elif isinstance(result, dict) and not result:
-                    results[model_name] = []
-                elif isinstance(result, dict):
-                    if any(isinstance(v, list) for v in result.values()):
-                        for v in result.values():
-                            if isinstance(v, list):
-                                results[model_name] = v
-                                break
-                    else:
-                        results[model_name] = [result]
-                else:
-                    results[model_name] = []
-                    logging.warning(f"Unexpected result type from {model_name}: {type(result)}")
-            except Exception as e:
-                logging.error(f"{model_name.capitalize()} analysis failed: {e}")
-                results[model_name] = []
-        
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Image analysis timed out")
-    except Exception as e:
-        logging.error(f"Unexpected error during analysis: {e}")
-        raise HTTPException(status_code=500, detail=f"Error during image analysis: {str(e)}")
-
-    return results
 
 
 @router.get("/image/{asset_id}")
@@ -483,25 +343,48 @@ async def get_asset_image(asset_id: str):
         logging.error(f"Error retrieving asset image: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     
-    
-# from google.cloud import storage
-# import tempfile
-# import os
 
-# class CloudStorageService:
-#     def __init__(self, bucket_name: str):
-#         self.client = storage.Client()
-#         self.bucket = self.client.bucket(bucket_name)
-    
-#     async def upload_temp_file(self, file_data: bytes, filename: str) -> str:
-#         """Upload file to Cloud Storage and return public URL"""
-#         blob = self.bucket.blob(f"temp/{filename}")
-#         blob.upload_from_string(file_data)
-#         return blob.public_url
-    
-#     async def download_to_temp(self, blob_name: str) -> str:
-#         """Download blob to temporary file and return path"""
-#         blob = self.bucket.blob(blob_name)
-#         temp_file = tempfile.NamedTemporaryFile(delete=False)
-#         blob.download_to_filename(temp_file.name)
-#         return temp_file.name
+@router.patch("/{id}", response_model=AssetResponse)
+async def update_asset(id: str, updates: dict = Body(...)):
+    """
+    Update an asset by ID with partial data
+    """
+    try:
+        object_id = ObjectId(id)
+        
+        # Remove any fields that shouldn't be updated directly
+        forbidden_fields = ['_id', 'created_at', 'description_vector', 'image_embedding']
+        clean_updates = {k: v for k, v in updates.items() if k not in forbidden_fields}
+        
+        if not clean_updates:
+            raise HTTPException(status_code=400, detail="No valid fields to update")
+        
+        # Add updated timestamp
+        clean_updates['updated_at'] = datetime.utcnow()
+        
+        # Update the asset
+        update_result = await asset_collection.update_one(
+            {"_id": object_id},
+            {"$set": clean_updates}
+        )
+        
+        if update_result.matched_count == 0:
+            raise HTTPException(status_code=404, detail=f"Asset with ID {id} not found")
+        
+        # Fetch and return the updated asset
+        updated_asset = await asset_collection.find_one({"_id": object_id})
+        if not updated_asset:
+            raise HTTPException(status_code=404, detail="Asset not found after update")
+        
+        # Remove sensitive fields before returning
+        for field in ["description_vector", "image_embedding", "image_data"]:
+            updated_asset.pop(field, None)
+        
+        return AssetResponse.model_validate(updated_asset)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error updating asset with ID {id}: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid ID format or update error: {str(e)}")
+
