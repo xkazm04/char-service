@@ -23,6 +23,9 @@ steps:
       - '--allow-unauthenticated'
       - '--port'
       - '8080'  
+options:
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
+  logging: CLOUD_LOGGING_ONLY  
 
 images:
   - 'gcr.io/$PROJECT_ID/char-service:$COMMIT_SHA'
