@@ -2,8 +2,6 @@ import logging
 import os
 from typing import List, Optional
 from dotenv import load_dotenv
-
-# Configure logging first
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

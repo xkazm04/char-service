@@ -8,28 +8,21 @@ steps:
     args: ['push', 'gcr.io/$PROJECT_ID/char-service:$COMMIT_SHA']
   
   # Deploy container image to Cloud Run
-  - name: 'gcr.io/cloud-builders/gcloud'
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
     args:
-    - 'run'
-    - 'deploy'
-    - 'char-service'
-    - '--image'
-    - 'gcr.io/$PROJECT_ID/char-service:$COMMIT_SHA'
-    - '--region'
-    - 'us-central1'
-    - '--platform'
-    - 'managed'
-    - '--allow-unauthenticated'
-    - '--memory'
-    - '2Gi'
-    - '--cpu'
-    - '2'
-    - '--timeout'
-    - '300'
-    - '--concurrency'
-    - '80'
-    - '--max-instances'
-    - '10'
+      - 'run'
+      - 'deploy'
+      - 'char-service'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/char-service:$COMMIT_SHA' 
+      - '--region'
+      - 'europe-west1'  
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--port'
+      - '8000'  
 
-options:
-  logging: CLOUD_LOGGING_ONLY
+images:
+  - 'gcr.io/$PROJECT_ID/char-service:$COMMIT_SHA'
