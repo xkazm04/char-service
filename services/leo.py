@@ -5,7 +5,7 @@ import logging
 from typing import Optional, Dict, Any
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-
+from config import config
 logging.basicConfig(level=logging.DEBUG)
 
 try:
@@ -14,8 +14,7 @@ except:
     pass
 
 LEONARDO_API_BASE_URL = "https://cloud.leonardo.ai/api/rest/v1"
-LEONARDO_API_KEY = os.getenv("LEONARDO_API_KEY")
-
+LEONARDO_API_KEY = config.leonardo_api_key
 # Better error message with debugging info
 if not LEONARDO_API_KEY:
     logging.error("Environment variables available: %s", list(os.environ.keys()))
