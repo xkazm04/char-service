@@ -3,13 +3,26 @@ import os
 from typing import List
 from openai import OpenAI
 from dotenv import load_dotenv
-# Load environment variables
+from google.cloud import secretmanager
 load_dotenv()
-# Ensure OpenAI API key is set
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def get_secret(secret_name: str) -> str:
+    """Get secret from Google Cloud Secret Manager"""
+    project_id = "mage-c2b4a"
+    
+    client = secretmanager.SecretManagerServiceClient()
+    name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+    
+    try:
+        response = client.access_secret_version(request={"name": name})
+        return response.payload.data.decode("UTF-8")
+    except Exception as e:
+        logging.warning(f"Could not retrieve secret {secret_name}: {e}")
+        return None
+
 
 class EmbeddingService:
     def __init__(self):
@@ -17,7 +30,7 @@ class EmbeddingService:
         try:
             from config import config
             openai_api_key = (
-                os.getenv("OPENAI_API_KEY") or config.openai_api_key
+                os.getenv("OPENAI_API_KEY") or config.openai_api_key or get_secret("OPENAI_API_KEY")
             )
             self.client = OpenAI(api_key=openai_api_key)
             self.model_name = "text-embedding-3-small"  
