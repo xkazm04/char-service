@@ -1,6 +1,5 @@
 import os
 import logging
-from typing import Optional
 
 class Config:
     def __init__(self):
@@ -28,7 +27,6 @@ class Config:
         self.leonardo_api_key = os.getenv("LEONARDO_API_KEY")
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.meshy_api_key = os.getenv("MESHY_API_KEY")
-        self.hf_api_key = os.getenv("HF_API_KEY")
         
         self.validate()
     

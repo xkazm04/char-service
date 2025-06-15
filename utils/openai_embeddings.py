@@ -1,10 +1,10 @@
 from openai import OpenAI
 import os
 from typing import List, Optional
-
+from config import config
 import logging
 logger = logging.getLogger(__name__)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-api-key-here")
+OPENAI_API_KEY = config.openai_api_key
 
 async def get_embedding(text: str, api_key: Optional[str] = None) -> List[float]:
     """

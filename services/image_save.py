@@ -8,11 +8,13 @@ from database import asset_collection
 from utils.db_helpers import serialize_for_json
 import base64
 from services.asset_save import get_embedding
+from config import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-api-key-here")
+
+OPENAI_API_KEY = config.openai_api_key
 
 async def get_image_embedding(image_data: bytes, api_key: Optional[str] = None) -> List[float]:
     """

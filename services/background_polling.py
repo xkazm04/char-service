@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 import os
 from database import generation_collection
@@ -93,7 +93,8 @@ class MeshyPollingService:
             return
             
         try:
-            api_key = os.environ.get("MESHY_API_KEY")
+            from config import config
+            api_key = config.meshy_api_key
             if not api_key:
                 logger.error("MESHY_API_KEY not found in environment variables")
                 return

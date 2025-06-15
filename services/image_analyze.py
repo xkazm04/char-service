@@ -3,17 +3,15 @@ from openai import OpenAI
 import base64
 import json
 from google import genai
-from dotenv import load_dotenv
-import os
 import logging
 from utils.json_extractor import extract_json_from_text
-load_dotenv()
+from config import config
 
 logger = logging.getLogger(__name__)
 
-open_api_key = os.getenv("OPENAI_API_KEY")
-google_api_key = os.getenv("GOOGLE_API_KEY")
-groq_api_key = os.getenv("GROQ_API_KEY")
+openai_api_key = config.openai_api_key
+google_api_key = config.google_api_key
+groq_api_key = config.groq_api_key
 
 
 def analyze_image(image_path: str, model: str, api_key=None) -> list:
@@ -42,7 +40,7 @@ def analyze_image(image_path: str, model: str, api_key=None) -> list:
 
     try:
         if model == "openai":
-            client = OpenAI(api_key=api_key or open_api_key)
+            client = OpenAI(openai_api_key)
             response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=messages,

@@ -54,8 +54,8 @@ async def create_3d_model(request: Image3DGenerationRequest):
         generation = await generation_collection.find_one({"_id": ObjectId(request.generation_id)})
         if not generation:
             raise HTTPException(status_code=404, detail="Generation not found")
-        
-        api_key = os.environ.get("MESHY_API_KEY")
+        from config import config
+        api_key = config.meshy_api_key
         if not api_key:
             raise HTTPException(status_code=500, detail="MESHY_API_KEY not found in environment variables")
         

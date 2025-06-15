@@ -2,13 +2,13 @@ import os
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 import logging
-
+from config import config
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DB_NAME = os.getenv("DB_NAME", "character_creator")
+MONGO_URI = config.mongo_uri
+DB_NAME = config.db_name
 
 client = AsyncIOMotorClient(MONGO_URI)
 database = client[DB_NAME]

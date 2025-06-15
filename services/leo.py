@@ -15,7 +15,7 @@ except:
 
 LEONARDO_API_BASE_URL = "https://cloud.leonardo.ai/api/rest/v1"
 LEONARDO_API_KEY = config.leonardo_api_key
-# Better error message with debugging info
+
 if not LEONARDO_API_KEY:
     logging.error("Environment variables available: %s", list(os.environ.keys()))
     logging.error("LEONARDO_API_KEY not found in environment variables")
@@ -26,7 +26,6 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-# Thread pool for background processing
 executor = ThreadPoolExecutor(max_workers=3)
 
 def delete_generation_api(generation_id: str):

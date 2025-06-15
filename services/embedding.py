@@ -15,7 +15,8 @@ class EmbeddingService:
     def __init__(self):
         """Initialize the embedding service with OpenAI."""
         try:
-            openai_api_key = os.getenv("OPENAI_API_KEY")
+            from config import config
+            openai_api_key = config.openai_api_key
             self.client = OpenAI(api_key=openai_api_key)
             self.model_name = "text-embedding-3-small"  
             self.embedding_dim = 1536
