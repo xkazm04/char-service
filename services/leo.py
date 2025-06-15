@@ -16,11 +16,6 @@ except:
 LEONARDO_API_BASE_URL = "https://cloud.leonardo.ai/api/rest/v1"
 LEONARDO_API_KEY = config.leonardo_api_key
 
-if not LEONARDO_API_KEY:
-    logging.error("Environment variables available: %s", list(os.environ.keys()))
-    logging.error("LEONARDO_API_KEY not found in environment variables")
-    raise ValueError("Leonardo API key is missing. Please set LEONARDO_API_KEY environment variable.")
-
 HEADERS = {
     "Authorization": f"Bearer {LEONARDO_API_KEY}",
     "Content-Type": "application/json",
