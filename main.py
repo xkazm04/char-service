@@ -18,7 +18,7 @@ app = FastAPI(lifespan=lifespan, title="Character Creator API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000, https://pikselplay.netlify.app"],
+    allow_origins=["http://localhost:3000, https://pikselplay.netlify.app", "https://char-ui.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
