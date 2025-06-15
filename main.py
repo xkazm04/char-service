@@ -44,8 +44,7 @@ def validate_environment():
     optional_vars = [
         'LEONARDO_API_KEY',
         'GROQ_API_KEY',
-        'MESHY_API_KEY',
-        'HF_API_KEY'
+        'MESHY_API_KEY'
     ]
     
     missing_required = []
