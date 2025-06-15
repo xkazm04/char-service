@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from config import config
+
 logging.basicConfig(level=logging.DEBUG)
 
 try:
