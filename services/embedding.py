@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import List, Dict, Any
+from typing import List
 from openai import OpenAI
 from dotenv import load_dotenv
 # Load environment variables
@@ -16,7 +16,9 @@ class EmbeddingService:
         """Initialize the embedding service with OpenAI."""
         try:
             from config import config
-            openai_api_key = config.openai_api_key
+            openai_api_key = (
+                os.getenv("OPENAI_API_KEY") or config.openai_api_key
+            )
             self.client = OpenAI(api_key=openai_api_key)
             self.model_name = "text-embedding-3-small"  
             self.embedding_dim = 1536
