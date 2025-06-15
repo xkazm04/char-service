@@ -54,28 +54,6 @@ The Character Creator API enables developers and content creators to:
    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
-
-### Code structure
-char-service/
-├── main.py              # FastAPI application entry point
-├── database.py          # MongoDB connection and configuration
-├── requirements.txt     # Python dependencies
-├── Dockerfile          # Container configuration
-├── models/             # Pydantic data models
-│   ├── asset.py
-│   ├── character.py
-│   └── generation.py
-├── routes/             # API route handlers
-│   ├── analyze.py      # Image analysis endpoints
-│   ├── asset.py        # Asset management
-│   ├── generation.py   # 3D generation
-│   └── search.py       # Search functionality
-├── services/           # Business logic services
-│   ├── image_analyze.py    # AI image analysis
-│   ├── background_polling.py  # Async task polling
-│   └── atlas_*.py         # MongoDB Atlas integrations
-└── utils/              # Utility functions
-
 ### API - Core endpoints
 - GET /health - Service health status
 - POST /analyze/ - Upload and analyze character images
