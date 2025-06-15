@@ -5,15 +5,22 @@ import logging
 from typing import Optional, Dict, Any
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+
 logging.basicConfig(level=logging.DEBUG)
 
-load_dotenv()
+try:
+    load_dotenv()
+except:
+    pass
 
 LEONARDO_API_BASE_URL = "https://cloud.leonardo.ai/api/rest/v1"
 LEONARDO_API_KEY = os.getenv("LEONARDO_API_KEY")
 
+# Better error message with debugging info
 if not LEONARDO_API_KEY:
-    raise ValueError("Leonardo API key is missing. Please set it in the .env file.")
+    logging.error("Environment variables available: %s", list(os.environ.keys()))
+    logging.error("LEONARDO_API_KEY not found in environment variables")
+    raise ValueError("Leonardo API key is missing. Please set LEONARDO_API_KEY environment variable.")
 
 HEADERS = {
     "Authorization": f"Bearer {LEONARDO_API_KEY}",

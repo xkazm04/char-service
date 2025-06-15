@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field, ConfigDict, GetCoreSchemaHandler
 from datetime import datetime
 from bson import ObjectId
 from pydantic_core import core_schema
-from services.embedding import embedding_service
 
 class PydanticObjectId(ObjectId):
     @classmethod
@@ -82,7 +81,6 @@ class GenerationBase(BaseModel):
     description_vector: Optional[List[float]] = None
     meshy: Optional[MeshyMetadata] = None
     created_at: datetime = Field(default_factory=datetime.now)
-    # Add 3D generation status tracking
     is_3d_generating: Optional[bool] = False
     has_3d_model: Optional[bool] = False
 
@@ -96,8 +94,8 @@ class GenerationResponse(GenerationBase):
     )
 
 class Generation(GenerationResponse):
-    # Add vector embedding field
-    embedding: Optional[List[float]] = Field(None, description="Vector embedding for semantic search")
+    # OpenAI embedding field (1536 dimensions)
+    embedding: Optional[List[float]] = Field(None, description="OpenAI vector embedding for semantic search")
     searchable_text: Optional[str] = Field(None, description="Preprocessed text for embedding generation")
     
     class Config:
@@ -105,8 +103,10 @@ class Generation(GenerationResponse):
         json_encoders = {ObjectId: str}
 
 class GenerationCreate(Generation):
-    def generate_embedding_data(self) -> tuple[str, List[float]]:
-        """Generate searchable text and embedding for this generation."""
+    async def generate_embedding_data(self) -> tuple[str, List[float]]:
+        """Generate searchable text and OpenAI embedding for this generation."""
+        from services.embedding import embedding_service
+        
         generation_dict = self.dict()
         searchable_text = embedding_service.create_searchable_text(generation_dict)
         embedding = embedding_service.generate_embedding(searchable_text)
@@ -116,7 +116,7 @@ class GenerationCreate(Generation):
 class GenerationSearchQuery(BaseModel):
     query: str = Field(..., description="Natural language search query")
     limit: int = Field(10, ge=1, le=50, description="Maximum number of results")
-    min_score: float = Field(0.5, ge=0.0, le=1.0, description="Minimum similarity score")
+    min_score: float = Field(0.7, ge=0.0, le=1.0, description="Minimum similarity score (higher for OpenAI)")
 
 class GenerationSearchResult(BaseModel):
     generation: Generation
